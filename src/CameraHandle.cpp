@@ -31,7 +31,7 @@ CameraHandle::CameraHandle(AppConfig *appConfig, string url, string id, set<stri
 //                                        this->appConfig->mappers, this->appConfig->interval);
     this->taskPool = new thread_pool(1);
     this->notRender.insert("person");
-    this->notRender.insert("aqwl");
+//    this->notRender.insert("aqwl");
     this->notRender.insert("gzfzr");
     this->notRender.insert("zzfzr");
     this->notRender.insert("helmet");
@@ -85,9 +85,15 @@ bool CameraHandle::CheckSmoke(PredictionResult smoke) {
                 int s_w = smoke.eventInfo.right - smoke.eventInfo.left;
                 int h_w = head.eventInfo.right - head.eventInfo.left;
                 float bs = (float) s_w / (float) h_w;
+
                 if (bs > 0.75) {
                     return false;
                 }
+                float r = overlapRate(smoke, head);
+                SPDLOG_INFO("{} rate with head is :{:03.2f}  hold: {:03.2f}",
+                            smoke.event,
+                            r,
+                            smoke.hold);
                 break;
             }
         }
@@ -102,6 +108,11 @@ bool CameraHandle::CheckSmoke(PredictionResult smoke) {
                 if (bs > 0.75) {
                     return false;
                 }
+                float r = overlapRate(smoke, helmet);
+                SPDLOG_INFO("{} rate with helmet is :{:03.2f}  hold: {:03.2f}",
+                            smoke.event,
+                            r,
+                            smoke.hold);
                 break;
             }
         }
@@ -160,17 +171,9 @@ bool CameraHandle::CheckWdAqd(PredictionResult offground) {
 
 bool CameraHandle::CheckWdJyst(PredictionResult predictionResult) {
     bool flag = false;
-    if (this->allResultBoxes.count("gz1") != 0) {
-        for (auto refrent: this->allResultBoxes["gz1"]) {
-            flag = intersect(predictionResult, refrent);
-            if (flag) {
-                break;
-            }
-        }
-    }
-    if (this->allResultBoxes.count("gz2") != 0 && !flag) {
-        for (const auto &refrent: this->allResultBoxes["gz2"]) {
-            flag = intersect(predictionResult, refrent);
+    if (this->allResultBoxes.count("gz") != 0) {
+        for (auto gz: this->allResultBoxes["gz"]) {
+            flag = intersect(predictionResult, gz);
             if (flag) {
                 break;
             }
@@ -213,17 +216,18 @@ bool CameraHandle::CheckDbxzr(PredictionResult &db) {
                 }
                 qflag = true;
             }
+
             width = db.eventInfo.right - db.eventInfo.left;
             int personwidth = person.eventInfo.right - person.eventInfo.left;
             int ps = width / personwidth;
-//            flag = intersect(db, person);
-            if (person.eventInfo.left > db.eventInfo.left &&
-                person.eventInfo.top > db.eventInfo.top &&
-                person.eventInfo.right < db.eventInfo.right &&
-                person.eventInfo.bottom < db.eventInfo.bottom) {
-                flag = true;
-//                break;
-            }
+            flag = intersect(db, person);
+//            if (person.eventInfo.left > db.eventInfo.left &&
+//                person.eventInfo.top > db.eventInfo.top &&
+//                person.eventInfo.right < db.eventInfo.right &&
+//                person.eventInfo.bottom < db.eventInfo.bottom) {
+//                flag = true;
+////                break;
+//            }
 //            SPDLOG_INFO("db width:{} person width:{} beisu:{} flag:{} qflag:{}", width, personwidth, ps, flag, qflag);
             if (flag && qflag ? ps < 25 && ps > 6 : ps < 11 && ps > 7) {
                 break;
@@ -454,7 +458,7 @@ void CameraHandle::Handle(cv::Mat frame) {
                     this->allResultBoxes[tempPredictionResult.event] = temp;
                 }
             }
-            string label = "helmet,gz1,gz2,onlyjyst,face,ydjz,safebelt,badsafebelt,pifu";
+            string label = "helmet,gz,onlyjyst,face,ydjz,safebelt,badsafebelt,pifu";
             map<string, PDRV>::iterator eventIterator;
             for (eventIterator = this->allResultBoxes.begin();
                  eventIterator != this->allResultBoxes.end(); eventIterator++) {
@@ -552,6 +556,22 @@ void CameraHandle::Handle(cv::Mat frame) {
             continue;
         }
         string showLabel = predictionResult.eventInfo.label;
+        if (eventChecks.count(showLabel) == 0) {
+            eventChecks.insert({showLabel, {showLabel, 1, gettimeofday_ms()}});
+        } else {
+            long long timeX = gettimeofday_ms() - eventChecks[showLabel].lasttime;
+            eventChecks[showLabel].lasttime = gettimeofday_ms();
+            if (timeX > 1000) {
+                eventChecks[showLabel].count = 1;
+                continue;
+            }
+            if (eventChecks[showLabel].count == 3) {
+                eventChecks[showLabel].count--;
+            } else {
+                eventChecks[showLabel].count++;
+            }
+        }
+
         if (this->appConfig->mappers.count(showLabel) != 0) {
             showLabel = this->appConfig->mappers[showLabel];
         }
@@ -559,6 +579,7 @@ void CameraHandle::Handle(cv::Mat frame) {
             showLabel = fmt::format("{0}_{1:.2f}", showLabel,
                                     predictionResult.eventInfo.hold);
         }
+
         this->yolo->drawRectangle(frame, predictionResult.eventInfo.left,
                                   predictionResult.eventInfo.top,
                                   predictionResult.eventInfo.right, predictionResult.eventInfo.bottom,
